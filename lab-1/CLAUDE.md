@@ -14,23 +14,12 @@ Lab texts: `labs_text.md`. Each lab lives in its own folder (`lab-1/`, `lab-2/`,
 - **Coordinator**: Python
 - **Messaging**: NATS — all inter-service communication uses NATS subjects
 
-## Running a lab
-
-```bash
-# Start workers (scale as needed):
-cd lab-N
-docker compose up -d --scale worker=4
-
-# Run coordinator interactively:
-docker compose run --rm coordinator
-```
-
 ## Architecture pattern
 
 Every lab uses the same topology:
 
 ```
-coordinator (Python) → publishes tasks → [NATS] → workers (R, queue group)
+coordinator (Python) → publishes tasks → [NATS] → workers (R, queue group "workers")
 coordinator          ← receives results ← [NATS] ←
 ```
 
@@ -42,11 +31,21 @@ coordinator          ← receives results ← [NATS] ←
 
 Goal: compare numpy vs distributed MapReduce on matrix operations.
 
-- Coordinator reads matrix size from stdin, generates random matrices
-- If size ≤ `NUMPY_MAX_SIZE=15_000`: runs numpy benchmark first
-- Always runs MapReduce benchmark (tasks distributed to R workers via NATS)
-- Prints timing comparison and correctness check
+```bash
+cd lab-1
 
+# after code change
+docker compose build coordinator worker                   
+
+
+docker compose up -d --scale worker=4                    # start R workers
+docker compose run --rm coordinator python matmul.py     # matrix multiplication
+docker compose run --rm coordinator python linreg.py     # linear regression
+```
+
+Each script reads sizes from stdin, generates random matrices, runs both numpy and MapReduce, then prints timing and correctness comparison. If size > `NUMPY_MAX_SIZE=15_000`, numpy is skipped (memory guard for 8 GB RAM).
+
+Shared module `mapreduce.py` — `matmul_mapreduce(nc, A, B)` distributes one NATS task per output cell.  
 Task format: `{i, j, row_a: [...], col_b: [...]}` → reply: `{i, j, val: float}`
 
-R worker uses a minimal raw-socket NATS client (no external R packages beyond `jsonlite`).
+R worker uses a minimal raw-socket NATS client (only `jsonlite` required, no extra packages).

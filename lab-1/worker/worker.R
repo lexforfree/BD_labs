@@ -77,7 +77,8 @@ while (TRUE) {
 
   # Dot product: C[i,j] = A[i,:] . B[:,j]
   val    <- sum(task$row_a * task$col_b)
-  result <- toJSON(list(i = task$i, j = task$j, val = val), auto_unbox = TRUE)
+  # digits = NA → full float64 precision (avoids ~5e-5 error from default 4 d.p.)
+  result <- toJSON(list(i = task$i, j = task$j, val = val), auto_unbox = TRUE, digits = NA)
 
   resp_size <- nchar(result, type = "bytes")
   nats_send(con, sprintf("PUB %s %d\r\n%s\r\n", reply_to, resp_size, result))
