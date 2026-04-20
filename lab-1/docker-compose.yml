@@ -4,6 +4,7 @@ services:
     ports:
       - "4222:4222"
 
+
   worker:
     build: ./worker
     environment:
