@@ -152,7 +152,8 @@ services:
 
   # ── Spark (standalone) ────────────────────
   spark:
-    image: bitnami/spark:3.5
+    # image: bitnami/spark:3.5
+    image: apache/spark:4.0.2-scala2.13-java17-python3-r-ubuntu
     container_name: spark
     restart: unless-stopped
     ports:
@@ -174,7 +175,8 @@ services:
         condition: service_healthy
 
   spark-worker:
-    image: bitnami/spark:3.5
+    # image: bitnami/spark:3.5
+    image: apache/spark:4.0.2-scala2.13-java17-python3-r-ubuntu
     container_name: spark-worker
     restart: unless-stopped
     environment:
