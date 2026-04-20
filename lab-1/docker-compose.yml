@@ -1,0 +1,24 @@
+services:
+  nats:
+    image: nats:latest
+    ports:
+      - "4222:4222"
+
+  worker:
+    build: ./worker
+    environment:
+      NATS_URL: nats://nats:4222
+    depends_on:
+      - nats
+    restart: unless-stopped
+
+  coordinator:
+    build: ./coordinator
+    environment:
+      NATS_URL: nats://nats:4222
+    depends_on:
+      - nats
+    stdin_open: true
+    tty: true
+    profiles:
+      - run
