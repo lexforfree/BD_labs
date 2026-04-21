@@ -6,7 +6,7 @@ set -e
 RAW_DIR="${1:-$(dirname "$0")/../data/raw}"
 BASE_URL="https://github.com/nflverse/nflverse-data/releases/download/pbp"
 START_YEAR="${START_YEAR:-2014}"
-END_YEAR="${END_YEAR:-2023}"
+END_YEAR="${END_YEAR:-2025}"
 
 mkdir -p "$RAW_DIR"
 

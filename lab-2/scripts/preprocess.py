@@ -14,11 +14,13 @@ import sys
 import csv
 import gzip
 import os
+from typing import Tuple
 
 OUTPUT_COLUMNS = ["qtr", "down", "ydstogo", "yardline_100", "score_differential", "win"]
 
 
-def process_file(input_path: str, writer: csv.DictWriter) -> tuple[int, int]:
+def process_file(input_path, writer):
+    # type: (str, csv.DictWriter) -> Tuple[int, int]
     """Read one season CSV (possibly gzipped), write clean rows. Returns (written, skipped)."""
     written = 0
     skipped = 0
@@ -90,7 +92,7 @@ def main():
         f for f in os.listdir(raw_dir) if f.endswith(".csv.gz") or f.endswith(".csv")
     )
     if not files:
-        print(f"No CSV files found in {raw_dir}", file=sys.stderr)
+        print("No CSV files found in {}".format(raw_dir), file=sys.stderr)
         sys.exit(1)
 
     with open(out_path, "w", newline="") as out_fh:
@@ -99,15 +101,15 @@ def main():
 
         for fname in files:
             in_path = os.path.join(raw_dir, fname)
-            print(f"Processing {fname}...", flush=True)
+            print("Processing {}...".format(fname), flush=True)
             written, skipped = process_file(in_path, writer)
             total_written += written
             total_skipped += skipped
-            print(f"  → written: {written:,}  skipped: {skipped:,}", flush=True)
+            print("  -> written: {:,}  skipped: {:,}".format(written, skipped), flush=True)
 
     size_mb = os.path.getsize(out_path) / 1024 / 1024
-    print(f"\nOutput: {out_path} ({size_mb:.1f} MB)")
-    print(f"Total rows: {total_written:,}  skipped: {total_skipped:,}")
+    print("\nOutput: {} ({:.1f} MB)".format(out_path, size_mb))
+    print("Total rows: {:,}  skipped: {:,}".format(total_written, total_skipped))
 
 
 if __name__ == "__main__":

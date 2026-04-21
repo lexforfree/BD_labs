@@ -63,8 +63,8 @@ for line in sys.stdin:
         if not (1 <= qtr <= 4 and 1 <= down <= 4):
             continue
 
-        key = f"{qtr}|{down}|{score_diff_bucket(score)}|{field_bucket(yard)}"
-        print(f"{key}\t{win}\t1")
+        key = "{}|{}|{}|{}".format(qtr, down, score_diff_bucket(score), field_bucket(yard))
+        print("{}\t{}\t1".format(key, win))
 
     except (ValueError, IndexError):
         # Header line ("qtr,down,...") and malformed rows fall here

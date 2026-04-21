@@ -59,7 +59,7 @@ for line in sys.stdin:
         pass
 with open("/results/hive_result.json", "w") as f:
     json.dump(rows, f, indent=2)
-print(f"Saved {len(rows)} rows to /results/hive_result.json")
+print("Saved {} rows to /results/hive_result.json".format(len(rows)))
 PYEOF
 
 # Save timing

@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(git init *)",
-      "Bash(chmod +x *)"
+      "Bash(chmod +x *)",
+      "Bash(docker compose *)",
+      "Bash(python3 -c \"import sys,json; h=json.load\\(sys.stdin\\); print\\('Status:', h['Status']\\); [print\\(l['Output'][:200]\\) for l in h.get\\('Log',[]\\)]\")",
+      "Bash(docker exec *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(grep -v \"^$\\\\| - Setting\\\\|Configuring\\\\|SLF4J\\\\|available\\\\|check for\\\\|try in\")"
     ]
   }
 }

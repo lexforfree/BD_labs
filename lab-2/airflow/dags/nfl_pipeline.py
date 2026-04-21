@@ -37,33 +37,35 @@ with DAG(
     tags=["nfl", "hadoop", "spark", "bigdata"],
 ) as dag:
 
+    # Trailing space prevents Airflow from treating the command as a Jinja template file
+    # (BashOperator has template_ext=('.sh', '.bash'), so commands ending in .sh get
+    # loaded as files unless a non-template character follows)
     upload_to_hdfs = BashOperator(
         task_id="upload_to_hdfs",
-        bash_command="docker exec namenode bash /scripts/upload_to_hdfs.sh",
+        bash_command="docker exec namenode bash /scripts/upload_to_hdfs.sh ",
         doc="Preprocess raw NFL CSVs and put merged file on HDFS.",
     )
 
     run_mapreduce = BashOperator(
         task_id="run_mapreduce",
-        bash_command="docker exec namenode bash /scripts/run_mr.sh",
+        bash_command="docker exec namenode bash /scripts/run_mr.sh ",
         doc="Hadoop Streaming MapReduce: compute win probability by bucket.",
     )
 
     run_hive = BashOperator(
         task_id="run_hive",
-        bash_command="docker exec hiveserver2 bash /scripts/run_hive.sh",
+        bash_command="docker exec hiveserver2 bash /scripts/run_hive.sh ",
         doc="Hive HQL query: same aggregation using MapReduce engine.",
     )
 
     run_spark = BashOperator(
         task_id="run_spark",
-        bash_command="docker exec spark bash /scripts/run_spark.sh",
+        bash_command="docker exec spark bash /scripts/run_spark.sh ",
         doc="PySpark: same aggregation using in-memory Spark execution.",
     )
 
     generate_report = BashOperator(
         task_id="generate_report",
-        # The visualization container has matplotlib; rebuild plots after new results
         bash_command="docker exec visualization python3 /app/plot_results.py",
         doc="Regenerate timing comparison chart and win probability heatmap.",
     )

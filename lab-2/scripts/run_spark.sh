@@ -12,7 +12,7 @@ echo "Master: spark://spark:7077"
 START_MS=$(python3 -c "import time; print(int(time.time() * 1000))")
 echo "Started at $(date)"
 
-/opt/bitnami/spark/bin/spark-submit \
+/opt/spark/bin/spark-submit \
     --master spark://spark:7077 \
     --conf spark.hadoop.fs.defaultFS=hdfs://namenode:9000 \
     --conf spark.hadoop.dfs.client.use.datanode.hostname=true \
