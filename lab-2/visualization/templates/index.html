@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NFL Win Probability — Lab 2 Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f0f2f5; color: #222; padding: 24px; }
+    h1 { font-size: 1.4rem; margin-bottom: 6px; }
+    p.sub { color: #555; font-size: 0.9rem; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+    .card h2 { font-size: 1rem; margin-bottom: 14px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+    .timing-row { display: flex; align-items: center; margin-bottom: 10px; }
+    .timing-label { width: 100px; font-size: 0.9rem; font-weight: 600; }
+    .bar-wrap { flex: 1; background: #eee; border-radius: 4px; height: 22px; overflow: hidden; }
+    .bar { height: 100%; border-radius: 4px; display: flex; align-items: center; padding-left: 8px;
+           font-size: 0.8rem; color: #fff; font-weight: 600; transition: width .6s; }
+    .bar.mr    { background: #e07b39; }
+    .bar.hive  { background: #5b9bd5; }
+    .bar.spark { background: #70ad47; }
+    .status { font-size: 0.85rem; padding: 3px 10px; border-radius: 12px; display: inline-block; }
+    .status.ok  { background: #d4edda; color: #155724; }
+    .status.pending { background: #fff3cd; color: #856404; }
+    canvas { max-height: 320px; }
+    img.chart { width: 100%; border-radius: 4px; margin-top: 8px; }
+    footer { margin-top: 28px; text-align: center; font-size: 0.8rem; color: #999; }
+    @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>NFL Win Probability — Lab 2 Dashboard</h1>
+  <p class="sub">
+    Question: <em>How does win probability change during a game based on (down, field position, score differential)?</em><br>
+    Tools compared: Hadoop MapReduce &bull; Hive &bull; Apache Spark
+  </p>
+
+  <div class="grid">
+
+    <!-- Timing card -->
+    <div class="card">
+      <h2>Execution Time Comparison</h2>
+
+      {% set max_ms = [
+          timing.get('mapreduce_ms', 0),
+          timing.get('hive_ms', 0),
+          timing.get('spark_ms', 0)
+      ] | max or 1 %}
+
+      {% for key, label, cls in [
+          ('mapreduce_ms', 'MapReduce', 'mr'),
+          ('hive_ms',      'Hive',      'hive'),
+          ('spark_ms',     'Spark',     'spark')
+      ] %}
+        {% set ms = timing.get(key) %}
+        <div class="timing-row">
+          <span class="timing-label">{{ label }}</span>
+          <div class="bar-wrap">
+            {% if ms %}
+              <div class="bar {{ cls }}" style="width:{{ (ms / max_ms * 100)|round|int }}%">
+                {{ "%.1f"|format(ms / 1000) }}s
+              </div>
+            {% else %}
+              <div class="bar {{ cls }}" style="width:0"></div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+
+      {% if not timing %}
+        <p style="color:#999; margin-top:12px">No results yet — run the pipeline first.</p>
+      {% endif %}
+
+      <p style="margin-top:16px; font-size:0.85rem; color:#555">
+        <strong>Pipeline status:</strong><br>
+        MapReduce: <span class="status {{ 'ok' if available.mr else 'pending' }}">
+          {{ 'done' if available.mr else 'pending' }}</span>
+        Hive: <span class="status {{ 'ok' if available.hive else 'pending' }}">
+          {{ 'done' if available.hive else 'pending' }}</span>
+        Spark: <span class="status {{ 'ok' if available.spark else 'pending' }}">
+          {{ 'done' if available.spark else 'pending' }}</span>
+      </p>
+    </div>
+
+    <!-- Win Probability heatmap -->
+    <div class="card">
+      <h2>Win Probability Heatmap</h2>
+      {% if available.spark or available.mr or available.hive %}
+        <img class="chart" src="/chart/heatmap" alt="Win Probability Heatmap">
+      {% else %}
+        <p style="color:#999">Heatmap will appear here after the pipeline runs.</p>
+      {% endif %}
+    </div>
+
+    <!-- Live WP explorer -->
+    <div class="card" style="grid-column: span 2">
+      <h2>Win Probability Explorer  <small style="font-weight:400; color:#555">(Spark results)</small></h2>
+      <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px; align-items:flex-end">
+        <label>Quarter:
+          <select id="sel-qtr">
+            <option>1</option><option>2</option><option selected>3</option><option>4</option>
+          </select>
+        </label>
+        <label>Down:
+          <select id="sel-down">
+            <option>1</option><option>2</option><option selected>3</option><option>4</option>
+          </select>
+        </label>
+        <label>Field bucket:
+          <select id="sel-field">
+            <option>0-25</option><option selected>26-50</option>
+            <option>51-75</option><option>76-100</option>
+          </select>
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <input type="checkbox" id="show-bayes" checked>
+          <span>Show Bayesian estimate <small style="color:#888">(Beta(2,2) prior)</small></span>
+        </label>
+      </div>
+      <canvas id="wp-chart"></canvas>
+      <p id="sample-info" style="margin-top:10px; font-size:0.8rem; color:#777"></p>
+    </div>
+
+    <!-- Bayesian explanation card -->
+    <div class="card" style="grid-column: span 2">
+      <h2>Bayesian Smoothing — Beta(2,2) Prior</h2>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; font-size:0.88rem; line-height:1.6">
+        <div>
+          <p><strong>Why Bayes?</strong></p>
+          <p>The empirical estimate <code>wins / total</code> is unreliable for rare situations
+          (e.g. 4th down while losing by 14 in the 1st quarter — only a handful of plays ever reached that state).
+          A Bayesian approach adds a <em>prior belief</em> and updates it with observed data.</p>
+          <p style="margin-top:8px"><strong>Formula:</strong></p>
+          <p><code>P(win | data) = (wins + α) / (total + α + β)</code></p>
+          <p>With <code>α = β = 2</code>: prior mean = 0.5, equivalent strength = 4 pseudo-observations.</p>
+        </div>
+        <div>
+          <p><strong>Effect on estimates:</strong></p>
+          <ul style="list-style:disc; padding-left:18px">
+            <li>Dense buckets (total &gt; 500): MLE ≈ Bayes — prior has negligible effect</li>
+            <li>Sparse buckets (total = 10–30): Bayes pulls estimate toward 0.5,
+                reducing extreme values caused by noise</li>
+            <li>The larger the prior strength (α + β), the stronger the regularisation</li>
+          </ul>
+          <p style="margin-top:8px"><strong>Connection to Beta distribution:</strong></p>
+          <p>Posterior is <code>Beta(α + wins, β + losses)</code>.
+          The posterior mean is exactly the formula above.
+          Beta(1,1) = uniform (no prior knowledge);
+          Beta(2,2) = mild belief that 50/50 is a reasonable default.</p>
+        </div>
+      </div>
+      <div id="bayes-table-wrap" style="margin-top:16px; overflow-x:auto"></div>
+    </div>
+
+  </div>
+
+  <footer>Lab 2 — Big Data / Distributed Computing &bull; NFL nflverse dataset 2014–2023</footer>
+
+  <script>
+    const SCORE_BUCKETS = ["le-14", "-13to-7", "-6to-1", "0", "1to6", "7to13", "ge14"];
+    let allData = [];
+    let chart = null;
+
+    async function loadData() {
+      try {
+        const r = await fetch("/api/results/spark");
+        if (r.ok) allData = await r.json();
+      } catch(e) {}
+      updateChart();
+      renderBayesTable();
+    }
+
+    function updateChart() {
+      const qtr   = parseInt(document.getElementById("sel-qtr").value);
+      const down  = parseInt(document.getElementById("sel-down").value);
+      const field = document.getElementById("sel-field").value;
+      const showBayes = document.getElementById("show-bayes").checked;
+
+      const filtered = allData.filter(
+        d => d.qtr === qtr && d.down === down && d.field_bucket === field
+      );
+
+      const mleMap = {}, bayesMap = {}, totalMap = {};
+      filtered.forEach(d => {
+        mleMap[d.score_diff_bucket]   = d.win_probability;
+        bayesMap[d.score_diff_bucket] = d.win_prob_bayes;
+        totalMap[d.score_diff_bucket] = d.total;
+      });
+
+      const mleValues   = SCORE_BUCKETS.map(k => mleMap[k]   ?? null);
+      const bayesValues = SCORE_BUCKETS.map(k => bayesMap[k] ?? null);
+      const totals      = SCORE_BUCKETS.map(k => totalMap[k] ?? 0);
+
+      const datasets = [{
+        label: `MLE  (wins/total)`,
+        data: mleValues,
+        backgroundColor: mleValues.map(v =>
+          v === null ? "#eee" : v > 0.5
+            ? `rgba(41,128,185,${0.4 + v * 0.6})`
+            : `rgba(192,57,43,${0.4 + (1-v) * 0.6})`
+        ),
+        borderRadius: 4,
+      }];
+
+      if (showBayes) {
+        datasets.push({
+          label: `Bayes Beta(2,2)`,
+          data: bayesValues,
+          backgroundColor: "rgba(0,0,0,0)",
+          borderColor: "#f39c12",
+          borderWidth: 2,
+          type: "line",
+          pointBackgroundColor: "#f39c12",
+          pointRadius: 5,
+          tension: 0.3,
+        });
+      }
+
+      const ctx = document.getElementById("wp-chart").getContext("2d");
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: "bar",
+        data: { labels: SCORE_BUCKETS, datasets },
+        options: {
+          plugins: {
+            legend: { display: true, position: "top" },
+            tooltip: {
+              callbacks: {
+                afterLabel: (ctx) => {
+                  if (ctx.datasetIndex === 0) {
+                    const n = totals[ctx.dataIndex];
+                    return n ? `n = ${n} plays` : "";
+                  }
+                  return "";
+                }
+              }
+            }
+          },
+          scales: {
+            y: { min: 0, max: 1, title: { display: true, text: "Win Probability" } },
+            x: { title: { display: true, text: "Score differential (possession team)" } },
+          },
+          animation: { duration: 300 },
+        }
+      });
+
+      // Sample size info
+      const minN = Math.min(...totals.filter(t => t > 0));
+      const maxN = Math.max(...totals);
+      document.getElementById("sample-info").textContent =
+        filtered.length
+          ? `Buckets shown: ${filtered.length} | Plays per bucket: min ${minN}, max ${maxN.toLocaleString()}`
+          : "No data for this combination.";
+    }
+
+    // Render table of biggest MLE vs Bayes differences
+    function renderBayesTable() {
+      if (!allData.length) return;
+      const diffs = allData
+        .filter(d => d.win_prob_bayes !== undefined)
+        .map(d => ({ ...d, diff: Math.abs(d.win_probability - d.win_prob_bayes) }))
+        .sort((a, b) => b.diff - a.diff)
+        .slice(0, 10);
+
+      const cols = ["qtr","down","score_diff_bucket","field_bucket","total","wins","win_probability","win_prob_bayes","diff"];
+      const headers = ["Qtr","Down","Score bucket","Field bucket","n","Wins","MLE","Bayes","|Δ|"];
+      let html = `<p style="font-size:0.85rem;font-weight:600;margin-bottom:8px">Top 10 buckets where Bayesian smoothing has the largest effect:</p>
+<table style="border-collapse:collapse;font-size:0.82rem;width:100%">
+<thead><tr>${headers.map(h=>`<th style="text-align:left;padding:4px 10px;border-bottom:2px solid #ddd">${h}</th>`).join("")}</tr></thead>
+<tbody>`;
+      diffs.forEach((r, i) => {
+        const bg = i % 2 === 0 ? "#f9f9f9" : "#fff";
+        html += `<tr style="background:${bg}">
+          <td style="padding:4px 10px">${r.qtr}</td>
+          <td style="padding:4px 10px">${r.down}</td>
+          <td style="padding:4px 10px">${r.score_diff_bucket}</td>
+          <td style="padding:4px 10px">${r.field_bucket}</td>
+          <td style="padding:4px 10px">${r.total}</td>
+          <td style="padding:4px 10px">${r.wins}</td>
+          <td style="padding:4px 10px">${r.win_probability.toFixed(4)}</td>
+          <td style="padding:4px 10px;color:#e67e22;font-weight:600">${r.win_prob_bayes.toFixed(4)}</td>
+          <td style="padding:4px 10px;color:#c0392b">${r.diff.toFixed(4)}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+      document.getElementById("bayes-table-wrap").innerHTML = html;
+    }
+
+    ["sel-qtr","sel-down","sel-field","show-bayes"].forEach(id => {
+      document.getElementById(id).addEventListener("change", updateChart);
+    });
+
+    loadData();
+  </script>
+</body>
+</html>

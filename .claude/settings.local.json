@@ -7,7 +7,8 @@
       "Bash(python3 -c \"import sys,json; h=json.load\\(sys.stdin\\); print\\('Status:', h['Status']\\); [print\\(l['Output'][:200]\\) for l in h.get\\('Log',[]\\)]\")",
       "Bash(docker exec *)",
       "Bash(grep -v \"^$\")",
-      "Bash(grep -v \"^$\\\\| - Setting\\\\|Configuring\\\\|SLF4J\\\\|available\\\\|check for\\\\|try in\")"
+      "Bash(grep -v \"^$\\\\| - Setting\\\\|Configuring\\\\|SLF4J\\\\|available\\\\|check for\\\\|try in\")",
+      "Bash(chmod -R 777 /home/lex/learn/bfu/BD_labs/lab-2/results/)"
     ]
   }
 }

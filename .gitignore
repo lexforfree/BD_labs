@@ -1,2 +1,4 @@
 lab-2/data/raw/*.csv.gz
 *.pyc
+lab-2/results/*
+lab-2/data/processed/*.csv
