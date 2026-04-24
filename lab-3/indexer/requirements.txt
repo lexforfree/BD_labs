@@ -1,0 +1,6 @@
+datasets>=2.18.0
+huggingface_hub>=0.20.0
+networkx==3.3
+scikit-learn==1.4.2
+tqdm==4.66.2
+requests==2.31.0
