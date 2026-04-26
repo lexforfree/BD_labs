@@ -14,7 +14,7 @@ import time
 from flask import Flask, render_template, request, jsonify
 
 from search.vectorizers import TFIDFVectorizer, BM25Vectorizer, LSAVectorizer, BERTVectorizer
-from search.fulltext import daat, taat
+from search.fulltext import daat, taat, get_term_matrix
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -123,7 +123,7 @@ def _enrich_results(raw: list[tuple[str, float]]) -> list[dict]:
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html", results=None, query="",
-                           vec_method="tfidf", stats=None, graph_data=None)
+                           vec_method="tfidf", stats=None, graph_data=None, vis_data=None)
 
 
 @app.route("/search", methods=["POST"])
@@ -134,6 +134,7 @@ def search():
     graph_data = None
 
     results = []
+    vis_data = None
     if query:
         t0 = time.perf_counter()
 
@@ -141,20 +142,49 @@ def search():
             from search.ppr_search import search as ppr_search
             log.info("PPR search: %r", query)
             raw, graph_data = ppr_search(query, top_k=10)
-            # attach titles to graph nodes
             for node in graph_data.get("nodes", []):
                 art = ARTICLE_MAP.get(node["id"])
                 node["title"] = art["title"] if art else node["id"]
         elif vec_method == "fulltext_daat":
             log.info("DAAT search: %r", query)
             raw = daat(query, INDEX, top_k=10)
+            graph_data = None
+            matrix_data = get_term_matrix(query, raw, INDEX)
+            matrix_data["doc_titles"] = [
+                ARTICLE_MAP[did]["title"] if did in ARTICLE_MAP else did
+                for did in matrix_data["doc_ids"]
+            ]
+            vis_data = {"type": "matrix", "data": matrix_data, "method": "DAAT"}
         elif vec_method == "fulltext_taat":
             log.info("TAAT search: %r", query)
             raw = taat(query, INDEX, top_k=10)
+            graph_data = None
+            matrix_data = get_term_matrix(query, raw, INDEX)
+            matrix_data["doc_titles"] = [
+                ARTICLE_MAP[did]["title"] if did in ARTICLE_MAP else did
+                for did in matrix_data["doc_ids"]
+            ]
+            vis_data = {"type": "matrix", "data": matrix_data, "method": "TAAT"}
         else:
             log.info("%s search: %r", vec_method.upper(), query)
+            graph_data = None
             vec = get_vectorizer(vec_method)
             raw = vec.query(query, top_k=10)
+            result_ids = [doc_id for doc_id, _ in raw]
+            if vec_method in ("tfidf", "bm25") and raw:
+                matrix = vec.get_contributions_matrix(query, result_ids)
+                for r in matrix["results"]:
+                    art = ARTICLE_MAP.get(r["id"])
+                    r["title"] = art["title"] if art else r["id"]
+                vis_data = {"type": "heatmap", "data": matrix, "method": vec_method.upper()}
+            elif vec_method in ("lsa", "bert"):
+                scatter = vec.get_scatter_data(query, result_ids)
+                if scatter:
+                    for doc in scatter["docs"]:
+                        if doc["is_result"]:
+                            art = ARTICLE_MAP.get(doc["id"])
+                            doc["title"] = art["title"] if art else doc["id"]
+                    vis_data = {"type": "scatter", "data": scatter, "method": vec_method.upper()}
 
         elapsed = time.perf_counter() - t0
         log.info("Search done: %d results in %.3fs", len(raw), elapsed)
@@ -177,6 +207,7 @@ def search():
         vec_method=vec_method,
         stats=stats,
         graph_data=json.dumps(graph_data) if graph_data else None,
+        vis_data=json.dumps(vis_data) if vis_data else None,
     )
 
 

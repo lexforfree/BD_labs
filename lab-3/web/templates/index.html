@@ -81,6 +81,20 @@
 
     label { font-size: 0.85rem; color: #5f6368; display: block; margin-bottom: 4px; }
 
+    /* Vis panel (bar / scatter / matrix) */
+    #vis-panel {
+      flex: 1;
+      padding: 24px 16px 24px 0;
+    }
+    #vis-panel h2 { font-size: 1rem; color: #3c4043; margin-bottom: 8px; }
+    #vis-container {
+      background: #fff;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #vis-svg { width: 100%; display: block; }
+
     /* Graph panel */
     #graph-panel {
       flex: 1;
@@ -208,6 +222,32 @@
     {% endif %}
   </div>
 
+  <!-- Visualization panel (non-PPR methods) -->
+  {% if vis_data %}
+  {% set vis = vis_data | fromjson %}
+  <div id="vis-panel">
+    {% if vis.type == 'heatmap' %}
+      <h2>Вклад термов запроса по результатам ({{ vis.method }})</h2>
+      <p style="font-size:0.78rem;color:#70757a;margin-bottom:8px">Строки — найденные статьи, столбцы — слова запроса. Цвет = вклад в score.</p>
+      <div id="vis-container" style="overflow-x:auto"><svg id="vis-svg"></svg></div>
+    {% elif vis.type == 'scatter' %}
+      <h2>Семантическое пространство документов ({{ vis.method }})</h2>
+      <p style="font-size:0.78rem;color:#70757a;margin-bottom:8px">Каждая точка — статья. Похожие статьи расположены рядом. Синяя точка — ваш запрос.</p>
+      <div id="vis-container"><svg id="vis-svg"></svg></div>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#e53935;width:12px;height:12px;border-radius:50%"></div> Результат (клик → Wikipedia)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#bdbdbd;width:7px;height:7px;border-radius:50%"></div> Другие статьи</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#1a73e8;width:11px;height:11px;border-radius:50%"></div> Запрос</div>
+      </div>
+    {% elif vis.type == 'matrix' %}
+      <h2>Постинг-листы ({{ vis.method }}): термы × документы</h2>
+      <p style="font-size:0.78rem;color:#70757a;margin-bottom:8px">Яркость = TF score. Пустая ячейка — терм отсутствует в документе.</p>
+      <div id="vis-container" style="overflow-x:auto"><svg id="vis-svg"></svg></div>
+    {% endif %}
+    <div class="d3-tooltip" id="vis-tooltip" style="display:none"></div>
+  </div>
+  {% endif %}
+
   <!-- Graph panel (PPR only) -->
   <div id="graph-panel" {% if graph_data %}class="visible"{% endif %}>
     <h2>Граф связей (entity co-occurrence)</h2>
@@ -231,6 +271,263 @@
     </div>
   </div>
 </div>
+
+{% if vis_data %}
+<script>
+(function() {
+  const vis = {{ vis_data | safe }};
+  const svg = d3.select("#vis-svg");
+  const container = document.getElementById("vis-container");
+  const tooltip = document.getElementById("vis-tooltip");
+  const W = container.clientWidth || 680;
+
+  function moveTip(e) {
+    const r = container.getBoundingClientRect();
+    tooltip.style.left = (e.clientX - r.left) + "px";
+    tooltip.style.top  = (e.clientY - r.top - 10) + "px";
+    tooltip.style.transform = "translate(-50%, -100%)";
+  }
+  function showTip(e, html) {
+    tooltip.style.display = "block";
+    tooltip.innerHTML = html;
+    moveTip(e);
+  }
+  function hideTip() { tooltip.style.display = "none"; }
+
+  // ── HEATMAP (TF-IDF / BM25) ───────────────────────────────────────────────
+  if (vis.type === "heatmap") {
+    const { terms, results } = vis.data;
+    if (!results.length || !terms.length) return;
+
+    const marginL = 210, marginR = 20, marginT = 80, marginB = 20;
+    const termW = Math.max(48, Math.min(90, Math.floor((W - marginL - marginR) / terms.length)));
+    const rowH = 34;
+    const H = results.length * rowH + marginT + marginB;
+    svg.attr("viewBox", `0 0 ${W} ${H}`).attr("height", H);
+
+    const maxVal = d3.max(results.flatMap(r => r.scores)) || 1;
+    const colorScale = d3.scaleSequential(d3.interpolateBlues).domain([0, maxVal]);
+
+    const g = svg.append("g").attr("transform", `translate(${marginL},${marginT})`);
+
+    // rotated column headers (query terms)
+    g.selectAll("text.col")
+      .data(terms)
+      .join("text")
+      .attr("class", "col")
+      .attr("x", 0).attr("y", 0)
+      .attr("transform", (d, i) => `translate(${i * termW + termW / 2}, -8) rotate(-40)`)
+      .attr("text-anchor", "start")
+      .attr("font-size", 11)
+      .attr("fill", "#3c4043")
+      .attr("font-weight", "500")
+      .text(d => d);
+
+    // rows = articles
+    results.forEach((res, ri) => {
+      const titleText = res.title || res.id;
+      const truncated = titleText.length > 30 ? titleText.slice(0, 28) + "…" : titleText;
+
+      g.append("text")
+        .attr("x", -8).attr("y", ri * rowH + rowH / 2 + 4)
+        .attr("text-anchor", "end").attr("font-size", 11).attr("fill", "#1a0dab")
+        .style("cursor", "pointer")
+        .text(truncated)
+        .on("click", () => window.open(
+          `https://ru.wikipedia.org/wiki/${encodeURIComponent(res.title || res.id)}`, "_blank"))
+        .on("mouseover", (e) => showTip(e, `<strong>${titleText}</strong>`))
+        .on("mousemove", moveTip)
+        .on("mouseout", hideTip);
+
+      res.scores.forEach((val, ci) => {
+        const cell = g.append("g")
+          .attr("transform", `translate(${ci * termW}, ${ri * rowH})`);
+
+        cell.append("rect")
+          .attr("width", termW - 2).attr("height", rowH - 2)
+          .attr("rx", 3)
+          .attr("fill", val > 0 ? colorScale(val) : "#f8f9fa")
+          .attr("stroke", "#dadce0")
+          .on("mouseover", (e) => showTip(e,
+            `<strong>${titleText}</strong><br>` +
+            `Терм: <em>${terms[ci]}</em><br>Score: ${val.toFixed(5)}`))
+          .on("mousemove", moveTip)
+          .on("mouseout", hideTip);
+
+        if (val > 0) {
+          cell.append("text")
+            .attr("x", (termW - 2) / 2).attr("y", (rowH - 2) / 2 + 4)
+            .attr("text-anchor", "middle").attr("font-size", 9)
+            .attr("fill", val > maxVal * 0.6 ? "#fff" : "#3c4043")
+            .style("pointer-events", "none")
+            .text(val.toFixed(3));
+        }
+      });
+    });
+  }
+
+  // ── SCATTER (LSA / BERT) ───────────────────────────────────────────────────
+  if (vis.type === "scatter") {
+    const H = 480;
+    svg.attr("viewBox", `0 0 ${W} ${H}`).attr("height", H);
+    const pad = { top: 20, right: 20, bottom: 30, left: 30 };
+
+    const docs = vis.data.docs;
+    const qx = vis.data.query.x, qy = vis.data.query.y;
+    const resDocs = docs.filter(d => d.is_result);
+
+    const xExt = d3.extent([...docs.map(d => d.x), qx]);
+    const yExt = d3.extent([...docs.map(d => d.y), qy]);
+    const xScale0 = d3.scaleLinear().domain(xExt).range([pad.left, W - pad.right]).nice();
+    const yScale0 = d3.scaleLinear().domain(yExt).range([H - pad.bottom, pad.top]).nice();
+
+    const g = svg.append("g");
+
+    // create selections first, then position via render()
+    const bgDots = g.selectAll("circle.bg")
+      .data(docs.filter(d => !d.is_result))
+      .join("circle")
+      .attr("class", "bg")
+      .attr("r", 3).attr("fill", "#bdbdbd").attr("opacity", 0.38);
+
+    const qlinks = g.selectAll("line.qlink")
+      .data(resDocs)
+      .join("line")
+      .attr("class", "qlink")
+      .attr("stroke", "#e53935").attr("stroke-width", 1)
+      .attr("stroke-dasharray", "5 3").attr("opacity", 0.5);
+
+    const resDots = g.selectAll("circle.res")
+      .data(resDocs)
+      .join("circle")
+      .attr("class", "res")
+      .attr("r", 8).attr("fill", "#e53935").attr("stroke", "#fff").attr("stroke-width", 1.5)
+      .style("cursor", "pointer")
+      .on("mouseover", (e, d) => showTip(e,
+        `<strong>${d.title || d.id}</strong><br><span style="color:#aaa;font-size:0.72rem">${d.id}</span>`))
+      .on("mousemove", moveTip)
+      .on("mouseout", hideTip)
+      .on("click", (e, d) => window.open(
+        `https://ru.wikipedia.org/wiki/${encodeURIComponent(d.title || d.id)}`, "_blank"));
+
+    const resLabels = g.selectAll("text.res-label")
+      .data(resDocs)
+      .join("text")
+      .attr("class", "res-label")
+      .attr("font-size", 9).attr("fill", "#b71c1c").attr("font-weight", "500")
+      .style("pointer-events", "none")
+      .text(d => {
+        const t = d.title || d.id;
+        return t.length > 22 ? t.slice(0, 20) + "…" : t;
+      });
+
+    const qDot = g.append("circle")
+      .attr("r", 10).attr("fill", "#1a73e8").attr("stroke", "#fff").attr("stroke-width", 2);
+    const qLabel = g.append("text")
+      .attr("font-size", 11).attr("fill", "#1a73e8").attr("font-weight", "bold")
+      .style("pointer-events", "none").text("запрос");
+
+    // render positions with given (possibly rescaled) axes
+    function render(xs, ys) {
+      bgDots.attr("cx", d => xs(d.x)).attr("cy", d => ys(d.y));
+      qlinks
+        .attr("x1", xs(qx)).attr("y1", ys(qy))
+        .attr("x2", d => xs(d.x)).attr("y2", d => ys(d.y));
+      resDots.attr("cx", d => xs(d.x)).attr("cy", d => ys(d.y));
+      resLabels.attr("x", d => xs(d.x) + 10).attr("y", d => ys(d.y) + 4);
+      qDot.attr("cx", xs(qx)).attr("cy", ys(qy));
+      qLabel.attr("x", xs(qx) + 13).attr("y", ys(qy) + 4);
+    }
+
+    render(xScale0, yScale0);
+
+    // zoom: rescale axes so dots stay fixed size, only coordinates spread
+    svg.call(d3.zoom()
+      .scaleExtent([0.4, 20])
+      .on("zoom", (e) => {
+        render(e.transform.rescaleX(xScale0), e.transform.rescaleY(yScale0));
+      })
+    );
+
+    // axis labels
+    svg.append("text")
+      .attr("x", W / 2).attr("y", H - 4)
+      .attr("text-anchor", "middle").attr("font-size", 10).attr("fill", "#70757a")
+      .text(vis.data.axes[0]);
+    svg.append("text")
+      .attr("transform", `translate(12,${H / 2}) rotate(-90)`)
+      .attr("text-anchor", "middle").attr("font-size", 10).attr("fill", "#70757a")
+      .text(vis.data.axes[1]);
+  }
+
+  // ── MATRIX (DAAT / TAAT) ───────────────────────────────────────────────────
+  if (vis.type === "matrix") {
+    const rows = vis.data.rows;
+    const docIds = vis.data.doc_ids;
+    const docTitles = vis.data.doc_titles || docIds;
+    if (!rows.length || !docIds.length) return;
+
+    const cellW = Math.min(72, Math.floor((W - 120) / docIds.length));
+    const cellH = 36;
+    const marginL = 120, marginT = 72;
+    const H = rows.length * cellH + marginT + 20;
+    svg.attr("viewBox", `0 0 ${W} ${H}`).attr("height", H);
+
+    const maxVal = d3.max(rows.flatMap(r => r.values)) || 1;
+    const colorScale = d3.scaleSequential(d3.interpolateBlues).domain([0, maxVal]);
+
+    const g = svg.append("g").attr("transform", `translate(${marginL},${marginT})`);
+
+    // rotated column headers (article titles)
+    g.selectAll("text.col")
+      .data(docTitles)
+      .join("text")
+      .attr("class", "col")
+      .attr("transform", (d, i) => `translate(${i * cellW + cellW / 2}, -6) rotate(-38)`)
+      .attr("text-anchor", "start")
+      .attr("font-size", 9)
+      .attr("fill", "#3c4043")
+      .text(d => {
+        const t = String(d);
+        return t.length > 16 ? t.slice(0, 14) + "…" : t;
+      });
+
+    rows.forEach((row, ri) => {
+      g.append("text")
+        .attr("x", -6).attr("y", ri * cellH + cellH / 2 + 4)
+        .attr("text-anchor", "end").attr("font-size", 12).attr("fill", "#3c4043")
+        .text(row.term);
+
+      row.values.forEach((val, ci) => {
+        const cell = g.append("g")
+          .attr("transform", `translate(${ci * cellW}, ${ri * cellH})`);
+
+        cell.append("rect")
+          .attr("width", cellW - 2).attr("height", cellH - 2)
+          .attr("rx", 3)
+          .attr("fill", val > 0 ? colorScale(val) : "#f8f9fa")
+          .attr("stroke", "#dadce0")
+          .on("mouseover", (e) => {
+            if (val > 0) showTip(e,
+              `<strong>${docTitles[ci]}</strong><br>Терм: <em>${row.term}</em><br>TF: ${val}`);
+          })
+          .on("mousemove", moveTip)
+          .on("mouseout", hideTip);
+
+        if (val > 0) {
+          cell.append("text")
+            .attr("x", (cellW - 2) / 2).attr("y", (cellH - 2) / 2 + 4)
+            .attr("text-anchor", "middle").attr("font-size", 10)
+            .attr("fill", val > maxVal * 0.5 ? "#fff" : "#3c4043")
+            .style("pointer-events", "none")
+            .text(val.toFixed(3));
+        }
+      });
+    });
+  }
+})();
+</script>
+{% endif %}
 
 {% if graph_data %}
 <script>
@@ -314,8 +611,9 @@
     })
     .on("mousemove", e => {
       const rect = container.getBoundingClientRect();
-      tooltip.style.left = (e.clientX - rect.left + 12) + "px";
-      tooltip.style.top  = (e.clientY - rect.top  - 10) + "px";
+      tooltip.style.left = (e.clientX - rect.left) + "px";
+      tooltip.style.top  = (e.clientY - rect.top - 10) + "px";
+      tooltip.style.transform = "translate(-50%, -100%)";
     })
     .on("mouseout", () => { tooltip.style.display = "none"; })
     .on("click", (e, d) => {

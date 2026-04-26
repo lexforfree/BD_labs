@@ -14,6 +14,23 @@ def tokenize(text: str) -> list[str]:
     return TOKEN_RE.findall(text.lower())
 
 
+def get_term_matrix(
+    query: str,
+    results: list[tuple[str, float]],
+    index: dict[str, list[tuple[str, float]]],
+) -> dict:
+    terms = list(dict.fromkeys(tokenize(query)))[:8]
+    doc_ids = [doc_id for doc_id, _ in results[:10]]
+
+    rows = []
+    for term in terms:
+        posting = dict(index.get(term, []))
+        values = [round(posting.get(did, 0.0), 4) for did in doc_ids]
+        rows.append({"term": term, "values": values})
+
+    return {"terms": terms, "doc_ids": doc_ids, "rows": rows}
+
+
 def daat(
     query: str,
     index: dict[str, list[tuple[str, float]]],
