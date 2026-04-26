@@ -13,18 +13,20 @@ mkdir -p "$DATA_DIR"
 
 echo "=== Setting up Python environment ==="
 if [ ! -f "$PY" ]; then
-    uv venv "$VENV" --python 3.11
+    uv venv "$VENV" --python 3.11 --seed
 fi
 
 uv pip install --python "$PY" \
+    "numpy>=1.26,<2.0" \
     "datasets>=2.18.0" \
     "huggingface_hub>=0.20.0" \
     "networkx==3.3" \
     "scikit-learn==1.4.2" \
     "sentence-transformers>=2.7.0" \
-    "numpy>=1.26" \
     "tqdm>=4.66" \
-    "requests>=2.31"
+    "requests>=2.31" \
+    "spacy==3.7.4" \
+    "ru_core_news_md @ https://github.com/explosion/spacy-models/releases/download/ru_core_news_md-3.7.0/ru_core_news_md-3.7.0-py3-none-any.whl"
 
 export DATA_DIR
 
@@ -39,6 +41,14 @@ echo "=== Step 2: Build inverted index + TF-IDF similarity graph ==="
 echo ""
 echo "=== Step 3: Pre-compute BERT embeddings ==="
 "$PY" indexer/precompute_bert.py
+
+echo ""
+echo "=== Step 3b: Extract entities with spaCy ==="
+"$PY" indexer/extract_entities.py
+
+echo ""
+echo "=== Step 3c: Build entity co-occurrence graph ==="
+"$PY" indexer/build_entity_graph.py
 
 echo ""
 echo "=== Step 4: PageRank via MapReduce ==="

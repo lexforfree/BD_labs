@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Мини-поисковик</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', Arial, sans-serif; background: #f1f3f4; color: #202124; }
@@ -27,7 +28,7 @@
       gap: 12px;
       flex-wrap: wrap;
       align-items: flex-end;
-      max-width: 900px;
+      max-width: 960px;
     }
     .search-row input[type="text"] {
       flex: 1 1 300px;
@@ -59,7 +60,9 @@
     }
     .search-row button:hover { background: #1558b0; }
 
-    .results { max-width: 900px; padding: 24px 32px; }
+    .main { display: flex; gap: 0; max-width: 1400px; }
+
+    .results { flex: 0 0 560px; padding: 24px 32px; }
     .result-count { color: #70757a; font-size: 0.85rem; margin-bottom: 16px; }
 
     .result-item {
@@ -69,15 +72,73 @@
       padding: 16px 20px;
       margin-bottom: 12px;
     }
-    .result-item h3 { font-size: 1.05rem; color: #1a0dab; }
-    .result-item h3 a { text-decoration: none; color: inherit; }
+    .result-item h3 { font-size: 1.05rem; }
+    .result-item h3 a { text-decoration: none; color: #1a0dab; }
     .result-item h3 a:hover { text-decoration: underline; }
-    .meta { font-size: 0.78rem; color: #70757a; margin: 4px 0 8px; display: flex; gap: 16px; }
+    .meta { font-size: 0.78rem; color: #70757a; margin: 4px 0 8px; display: flex; gap: 16px; flex-wrap: wrap; }
     .snippet { font-size: 0.9rem; color: #3c4043; line-height: 1.5; }
-
     .no-results { color: #70757a; font-size: 0.95rem; margin-top: 32px; }
 
     label { font-size: 0.85rem; color: #5f6368; display: block; margin-bottom: 4px; }
+
+    /* Graph panel */
+    #graph-panel {
+      flex: 1;
+      padding: 24px 16px 24px 0;
+      display: none;
+    }
+    #graph-panel.visible { display: block; }
+    #graph-panel h2 { font-size: 1rem; color: #3c4043; margin-bottom: 8px; }
+    #graph-container {
+      background: #fff;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+    }
+    #graph-svg { width: 100%; height: 520px; }
+
+    .legend {
+      display: flex;
+      gap: 16px;
+      margin-top: 8px;
+      font-size: 0.78rem;
+      color: #5f6368;
+      flex-wrap: wrap;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .entities-bar {
+      margin-top: 8px;
+      font-size: 0.8rem;
+      color: #5f6368;
+    }
+    .entity-tag {
+      display: inline-block;
+      background: #e8f0fe;
+      color: #1a73e8;
+      border-radius: 12px;
+      padding: 2px 10px;
+      margin: 2px;
+    }
+
+    /* D3 tooltip */
+    .d3-tooltip {
+      position: absolute;
+      background: rgba(32,33,36,.88);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      pointer-events: none;
+      max-width: 220px;
+      line-height: 1.4;
+      z-index: 100;
+    }
   </style>
 </head>
 <body>
@@ -91,7 +152,6 @@
   <form method="post" action="/search">
     <div class="search-row">
       <input type="text" name="query" value="{{ query }}" placeholder="Введите запрос..." autofocus>
-
       <div>
         <label for="vec_method">Метод поиска</label>
         <select name="vec_method" id="vec_method">
@@ -105,44 +165,185 @@
             <option value="fulltext_daat" {% if vec_method == 'fulltext_daat' %}selected{% endif %}>DAAT (document-at-a-time)</option>
             <option value="fulltext_taat" {% if vec_method == 'fulltext_taat' %}selected{% endif %}>TAAT (term-at-a-time)</option>
           </optgroup>
+          <optgroup label="Графовый поиск">
+            <option value="ppr"           {% if vec_method == 'ppr'           %}selected{% endif %}>PPR — Personalized PageRank</option>
+          </optgroup>
         </select>
       </div>
-
       <button type="submit">Найти</button>
     </div>
   </form>
 </div>
 
-<div class="results">
-  {% if stats %}
-    <div class="result-count">
-      Метод: <strong>{{ stats.method }}</strong> &nbsp;·&nbsp;
-      {% if stats.is_fulltext %}
-        Найдено совпадений: <strong>{{ stats.shown }}</strong>
-      {% else %}
-        Топ <strong>{{ stats.shown }}</strong> из <strong>{{ stats.corpus_size }}</strong> документов
-      {% endif %}
-      &nbsp;·&nbsp; Время: <strong>{{ stats.elapsed_ms }} мс</strong>
-    </div>
-  {% endif %}
-  {% if results is not none %}
-    {% if results %}
-      {% for r in results %}
-      <div class="result-item">
-        <h3><a href="https://ru.wikipedia.org/wiki/{{ r.title_url }}" target="_blank">{{ r.title }}</a></h3>
-        <div class="meta">
-          <span>Релевантность: <strong>{{ r.score }}</strong></span>
-          <span>PageRank: <strong>{{ r.pagerank }}</strong></span>
-          <span>ID: {{ r.doc_id }}</span>
-        </div>
-        <div class="snippet">{{ r.snippet }}</div>
+<div class="main">
+  <div class="results">
+    {% if stats %}
+      <div class="result-count">
+        Метод: <strong>{{ stats.method }}</strong> &nbsp;·&nbsp;
+        {% if stats.is_fulltext %}
+          Найдено совпадений: <strong>{{ stats.shown }}</strong>
+        {% else %}
+          Топ <strong>{{ stats.shown }}</strong> из <strong>{{ stats.corpus_size }}</strong> документов
+        {% endif %}
+        &nbsp;·&nbsp; Время: <strong>{{ stats.elapsed_ms }} мс</strong>
       </div>
-      {% endfor %}
-    {% else %}
-      <div class="no-results">По запросу <em>«{{ query }}»</em> ничего не найдено.</div>
     {% endif %}
-  {% endif %}
+
+    {% if results is not none %}
+      {% if results %}
+        {% for r in results %}
+        <div class="result-item">
+          <h3><a href="https://ru.wikipedia.org/wiki/{{ r.title_url }}" target="_blank">{{ r.title }}</a></h3>
+          <div class="meta">
+            <span>Релевантность: <strong>{{ r.score }}</strong></span>
+            <span>PageRank: <strong>{{ r.pagerank }}</strong></span>
+            <span>ID: {{ r.doc_id }}</span>
+          </div>
+          <div class="snippet">{{ r.snippet }}</div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="no-results">По запросу <em>«{{ query }}»</em> ничего не найдено.</div>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  <!-- Graph panel (PPR only) -->
+  <div id="graph-panel" {% if graph_data %}class="visible"{% endif %}>
+    <h2>Граф связей (entity co-occurrence)</h2>
+    <div id="graph-container">
+      <svg id="graph-svg"></svg>
+      <div class="d3-tooltip" id="tooltip" style="display:none;"></div>
+    </div>
+    {% if graph_data %}
+    <div class="entities-bar">
+      Найденные сущности:
+      {% for ent in (graph_data | fromjson).matched_entities %}
+        <span class="entity-tag">{{ ent }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#e53935"></div> Seed + результат</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#fb8c00"></div> Seed (по сущностям)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#1a73e8"></div> Результат PPR</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#bdbdbd"></div> Сосед</div>
+    </div>
+  </div>
 </div>
+
+{% if graph_data %}
+<script>
+(function() {
+  const raw = {{ graph_data | safe }};
+  if (!raw || !raw.nodes.length) return;
+
+  const NODE_COLORS = {
+    seed_result: "#e53935",
+    seed:        "#fb8c00",
+    result:      "#1a73e8",
+    neighbor:    "#bdbdbd",
+  };
+
+  const svg = d3.select("#graph-svg");
+  const container = document.getElementById("graph-container");
+  const W = container.clientWidth || 700;
+  const H = 520;
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+
+  const tooltip = document.getElementById("tooltip");
+
+  // build maps
+  const nodeById = Object.fromEntries(raw.nodes.map(n => [n.id, n]));
+  const maxScore = d3.max(raw.nodes, n => n.score) || 1;
+
+  const radiusScale = d3.scaleSqrt()
+    .domain([0, maxScore])
+    .range([5, 22]);
+
+  // deduplicate links
+  const seen = new Set();
+  const links = raw.links.filter(l => {
+    const key = [l.source, l.target].sort().join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const simulation = d3.forceSimulation(raw.nodes)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(80).strength(0.4))
+    .force("charge", d3.forceManyBody().strength(-180))
+    .force("center", d3.forceCenter(W / 2, H / 2))
+    .force("collision", d3.forceCollide().radius(d => radiusScale(d.score) + 4));
+
+  const g = svg.append("g");
+
+  // zoom + pan
+  svg.call(d3.zoom()
+    .scaleExtent([0.3, 4])
+    .on("zoom", e => g.attr("transform", e.transform))
+  );
+
+  // edges
+  const linkSel = g.append("g")
+    .selectAll("line")
+    .data(links)
+    .join("line")
+    .attr("stroke", "#e0e0e0")
+    .attr("stroke-width", d => Math.min(d.weight, 6))
+    .attr("stroke-opacity", 0.7);
+
+  // nodes
+  const nodeSel = g.append("g")
+    .selectAll("circle")
+    .data(raw.nodes)
+    .join("circle")
+    .attr("r", d => radiusScale(d.score))
+    .attr("fill", d => NODE_COLORS[d.type] || "#bdbdbd")
+    .attr("stroke", "#fff")
+    .attr("stroke-width", 1.5)
+    .style("cursor", "pointer")
+    .call(d3.drag()
+      .on("start", (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on("drag",  (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on("end",   (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    )
+    .on("mouseover", (e, d) => {
+      tooltip.style.display = "block";
+      tooltip.innerHTML = `<strong>${d.title}</strong><br>PPR: ${d.score.toFixed(6)}<br>Тип: ${d.type}`;
+    })
+    .on("mousemove", e => {
+      const rect = container.getBoundingClientRect();
+      tooltip.style.left = (e.clientX - rect.left + 12) + "px";
+      tooltip.style.top  = (e.clientY - rect.top  - 10) + "px";
+    })
+    .on("mouseout", () => { tooltip.style.display = "none"; })
+    .on("click", (e, d) => {
+      window.open(`https://ru.wikipedia.org/wiki/${encodeURIComponent(d.title)}`, "_blank");
+    });
+
+  // labels for important nodes
+  const labelSel = g.append("g")
+    .selectAll("text")
+    .data(raw.nodes.filter(n => n.type !== "neighbor"))
+    .join("text")
+    .attr("font-size", 9)
+    .attr("fill", "#3c4043")
+    .attr("text-anchor", "middle")
+    .attr("dy", d => radiusScale(d.score) + 11)
+    .text(d => d.title.length > 20 ? d.title.slice(0, 18) + "…" : d.title)
+    .style("pointer-events", "none");
+
+  simulation.on("tick", () => {
+    linkSel
+      .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+    nodeSel.attr("cx", d => d.x).attr("cy", d => d.y);
+    labelSel.attr("x", d => d.x).attr("y", d => d.y);
+  });
+})();
+</script>
+{% endif %}
 
 </body>
 </html>

@@ -11,7 +11,7 @@ import pickle
 import textwrap
 import threading
 import time
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 
 from search.vectorizers import TFIDFVectorizer, BM25Vectorizer, LSAVectorizer, BERTVectorizer
 from search.fulltext import daat, taat
@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 
 app = Flask(__name__)
+app.jinja_env.filters["fromjson"] = json.loads
 
 # ---------------------------------------------------------------------------
 # Load data at startup
@@ -71,6 +72,7 @@ METHOD_LABELS = {
     "bert": "BERT",
     "fulltext_daat": "DAAT",
     "fulltext_taat": "TAAT",
+    "ppr": "PPR (spaCy + entity graph)",
 }
 
 
@@ -96,6 +98,24 @@ def _preload_bert():
 threading.Thread(target=_preload_bert, daemon=True).start()
 
 
+def _enrich_results(raw: list[tuple[str, float]]) -> list[dict]:
+    results = []
+    for doc_id, score in raw:
+        art = ARTICLE_MAP.get(doc_id)
+        if art is None:
+            continue
+        snippet = textwrap.shorten(art["text"], width=300, placeholder="…")
+        results.append({
+            "title": art["title"],
+            "title_url": art["title"].replace(" ", "_"),
+            "doc_id": doc_id,
+            "score": round(score, 4),
+            "pagerank": round(PAGERANK.get(doc_id, 0.0), 6),
+            "snippet": snippet,
+        })
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -103,7 +123,7 @@ threading.Thread(target=_preload_bert, daemon=True).start()
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html", results=None, query="",
-                           vec_method="tfidf", stats=None)
+                           vec_method="tfidf", stats=None, graph_data=None)
 
 
 @app.route("/search", methods=["POST"])
@@ -111,12 +131,21 @@ def search():
     query = request.form.get("query", "").strip()
     vec_method = request.form.get("vec_method", "tfidf")
     stats = None
+    graph_data = None
 
     results = []
     if query:
         t0 = time.perf_counter()
 
-        if vec_method == "fulltext_daat":
+        if vec_method == "ppr":
+            from search.ppr_search import search as ppr_search
+            log.info("PPR search: %r", query)
+            raw, graph_data = ppr_search(query, top_k=10)
+            # attach titles to graph nodes
+            for node in graph_data.get("nodes", []):
+                art = ARTICLE_MAP.get(node["id"])
+                node["title"] = art["title"] if art else node["id"]
+        elif vec_method == "fulltext_daat":
             log.info("DAAT search: %r", query)
             raw = daat(query, INDEX, top_k=10)
         elif vec_method == "fulltext_taat":
@@ -139,22 +168,16 @@ def search():
             "is_fulltext": is_fulltext,
         }
 
-        for doc_id, score in raw:
-            art = ARTICLE_MAP.get(doc_id)
-            if art is None:
-                continue
-            snippet = textwrap.shorten(art["text"], width=300, placeholder="…")
-            results.append({
-                "title": art["title"],
-                "title_url": art["title"].replace(" ", "_"),
-                "doc_id": doc_id,
-                "score": round(score, 4),
-                "pagerank": round(PAGERANK.get(doc_id, 0.0), 6),
-                "snippet": snippet,
-            })
+        results = _enrich_results(raw)
 
-    return render_template("index.html", results=results, query=query,
-                           vec_method=vec_method, stats=stats)
+    return render_template(
+        "index.html",
+        results=results,
+        query=query,
+        vec_method=vec_method,
+        stats=stats,
+        graph_data=json.dumps(graph_data) if graph_data else None,
+    )
 
 
 if __name__ == "__main__":
