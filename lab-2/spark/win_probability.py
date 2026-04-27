@@ -3,8 +3,6 @@ NFL Win Probability analysis using Apache Spark.
 
 Groups plays by (qtr, down, score_diff_bucket, field_bucket)
 and computes empirical win probability = wins / total.
-
-No pandas, no scikit-learn — PySpark DataFrame API only.
 """
 import json
 import os
