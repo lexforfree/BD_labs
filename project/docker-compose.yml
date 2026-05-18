@@ -1,0 +1,161 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────
+#  Vector DB Benchmark: pgvector vs Qdrant vs Milvus
+#  Dataset: Airbnb listings (InsideAirbnb, ~500k records)
+#  Task: semantic search for similar properties
+# ─────────────────────────────────────────────────────────
+
+services:
+
+  # ── pgvector (PostgreSQL + vector extension) ──────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: pgvector
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: pguser
+      POSTGRES_PASSWORD: pgpassword
+      POSTGRES_DB: listings
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+      - ./scripts/init_pgvector.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pguser -d listings"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Qdrant ────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # HTTP API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' 2>/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  # ── Milvus dependencies ───────────────────────────────
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: milvus-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - etcd_data:/etcd
+    command: >
+      etcd
+      --advertise-client-urls=http://etcd:2379
+      --listen-client-urls=http://0.0.0.0:2379
+      --data-dir=/etcd
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-13T19-46-17Z
+    container_name: milvus-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - minio_data:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ── Milvus standalone ─────────────────────────────────
+  milvus:
+    image: milvusdb/milvus:v2.4.1
+    container_name: milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    ports:
+      - "19530:19530"   # gRPC
+      - "9091:9091"     # Web UI / metrics
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  # ── Python runner (scripts) ───────────────────────────
+  runner:
+    build: ./runner
+    container_name: runner
+    restart: "no"
+    volumes:
+      - ./scripts:/scripts
+      - ./data:/data
+      - ./results:/results
+    environment:
+      PG_DSN: "postgresql://pguser:pgpassword@postgres:5432/listings"
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      MILVUS_HOST: milvus
+      MILVUS_PORT: "19530"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    command: ["tail", "-f", "/dev/null"]   # keep alive; exec into it manually
+
+  # ── Visualization (Flask + Leaflet map) ───────────────
+  visualization:
+    build: ./visualization
+    container_name: visualization
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./data:/data
+      - ./results:/results
+    environment:
+      PG_DSN: "postgresql://pguser:pgpassword@postgres:5432/listings"
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      MILVUS_HOST: milvus
+      MILVUS_PORT: "19530"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+
+volumes:
+  pgvector_data:
+  qdrant_data:
+  etcd_data:
+  minio_data:
+  milvus_data:

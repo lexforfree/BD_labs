@@ -1,6 +1,9 @@
 lab-2/data/raw/*.csv.gz
+presentation/data/raw/*.csv.gz
 *.pyc
+__pycache__/
 lab-2/results/*
 lab-2/data/processed/*.csv
 lab-3/data/*
 .venv/
+project/results/benchmark.json

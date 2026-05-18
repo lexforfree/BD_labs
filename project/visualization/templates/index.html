@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Vector DB Demo — Semantic Property Search</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f4f5f7; color: #222; height: 100vh; display: flex; flex-direction: column; }
+    header { background: #1a1a2e; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
+    header .pill { background: #e94560; color: #fff; font-size: 0.75rem; padding: 2px 10px; border-radius: 12px; }
+    .main { display: flex; flex: 1; overflow: hidden; }
+    #map { flex: 1; }
+    .sidebar { width: 380px; display: flex; flex-direction: column; background: #fff; border-left: 1px solid #e0e0e0; overflow-y: auto; flex-shrink: 0; }
+    .search-box { padding: 16px; border-bottom: 1px solid #eee; }
+    .search-box h2 { font-size: 0.9rem; font-weight: 600; margin-bottom: 10px; color: #555; text-transform: uppercase; letter-spacing: .05em; }
+    textarea { width: 100%; border: 1px solid #ccc; border-radius: 6px; padding: 10px; font-size: 0.9rem; resize: vertical; min-height: 80px; }
+    .db-toggle { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .db-btn { padding: 5px 14px; border-radius: 20px; border: 2px solid #ddd; background: #fff; font-size: 0.8rem; cursor: pointer; font-weight: 600; }
+    .db-btn.active.pg    { border-color: #e07b39; background: #e07b39; color: #fff; }
+    .db-btn.active.qdrant { border-color: #5b9bd5; background: #5b9bd5; color: #fff; }
+    .db-btn.active.milvus { border-color: #70ad47; background: #70ad47; color: #fff; }
+    .controls-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: #555; font-size: 0.8rem; }
+    .controls-row input { width: 72px; border: 1px solid #ccc; border-radius: 6px; padding: 5px 8px; background: #fff; }
+    .search-btn { margin-top: 10px; width: 100%; padding: 9px; background: #1a1a2e; color: #fff; border: none; border-radius: 6px; font-size: 0.95rem; cursor: pointer; font-weight: 600; }
+    .search-btn:hover { background: #16213e; }
+    .timing { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; font-size: 0.78rem; color: #666; }
+    .timing span { background: #f0f0f0; padding: 2px 8px; border-radius: 10px; }
+    .results-section { padding: 12px 16px; }
+    .results-section h3 { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #888; margin-bottom: 8px; }
+    .card { border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; transition: box-shadow .15s; }
+    .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+    .card .title { font-weight: 600; font-size: 0.9rem; margin-bottom: 3px; }
+    .card .meta { font-size: 0.78rem; color: #666; }
+    .card .listing-id { font-size: 0.72rem; color: #999; margin-top: 4px; }
+    .card .description { font-size: 0.8rem; color: #333; line-height: 1.35; margin-top: 8px; max-height: 7.6em; overflow: auto; }
+    .card .actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.75rem; }
+    .card a { color: #1a1a2e; font-weight: 600; text-decoration: none; }
+    .card a:hover { text-decoration: underline; }
+    .card .score { float: right; font-size: 0.78rem; background: #e8f4e8; color: #2a7a2a; padding: 1px 7px; border-radius: 10px; font-weight: 600; }
+    .benchmark { padding: 16px; border-top: 1px solid #eee; }
+    .benchmark h2 { font-size: 0.9rem; font-weight: 600; margin-bottom: 10px; color: #555; text-transform: uppercase; }
+    canvas { max-height: 180px; }
+    .empty { color: #aaa; font-size: 0.85rem; padding: 20px 0; text-align: center; }
+    .spinner { display: none; text-align: center; padding: 20px; color: #888; }
+
+    /* Leaflet marker colors */
+    .marker-pg     { background: #e07b39; }
+    .marker-qdrant { background: #5b9bd5; }
+    .marker-milvus { background: #70ad47; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Vector DB Semantic Search</h1>
+    <span class="pill">pgvector</span>
+    <span class="pill" style="background:#5b9bd5">Qdrant</span>
+    <span class="pill" style="background:#70ad47">Milvus</span>
+    <span style="margin-left:auto; font-size:0.8rem; opacity:.7">~100k Airbnb listings · all-MiniLM-L6-v2</span>
+  </header>
+
+  <div class="main">
+    <div id="map"></div>
+
+    <div class="sidebar">
+      <div class="search-box">
+        <h2>Semantic Search</h2>
+        <textarea id="query" placeholder="e.g. cozy apartment near the park with modern kitchen and city views..."></textarea>
+        <div class="db-toggle">
+          <button class="db-btn active pg"     data-db="pgvector">pgvector</button>
+          <button class="db-btn active qdrant" data-db="qdrant">Qdrant</button>
+          <button class="db-btn active milvus" data-db="milvus">Milvus</button>
+        </div>
+        <div class="controls-row">
+          <label for="top-k">Results per DB</label>
+          <input id="top-k" type="number" min="1" max="200" step="1" value="20">
+        </div>
+        <button class="search-btn" onclick="doSearch()">Search</button>
+        <div class="timing" id="timing"></div>
+      </div>
+
+      <div class="spinner" id="spinner">Searching…</div>
+
+      <div id="results-container"></div>
+
+      <div class="benchmark">
+        <h2>Benchmark Results</h2>
+        <canvas id="bench-chart"></canvas>
+        <p id="bench-note" style="font-size:0.75rem;color:#999;margin-top:6px"></p>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ── Map ──────────────────────────────────────────────────────────────────────
+const map = L.map('map').setView([39, -98], 4);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap', maxZoom: 18
+}).addTo(map);
+
+const resultLayers = { pgvector: L.layerGroup().addTo(map), qdrant: L.layerGroup().addTo(map), milvus: L.layerGroup().addTo(map) };
+const bgLayer = L.layerGroup().addTo(map);
+const COLORS = { pgvector: '#e07b39', qdrant: '#5b9bd5', milvus: '#70ad47' };
+
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function makeIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="dot" style="background:${color}"></div>`,
+    iconSize: [12, 12], iconAnchor: [6, 6],
+  });
+}
+
+// Load background sample
+fetch('/api/sample').then(r => r.json()).then(pts => {
+  pts.forEach(p => {
+    L.circleMarker([p.lat, p.lon], {
+      radius: 3, color: '#aaa', fillColor: '#ccc', fillOpacity: 0.5, weight: 0
+    }).bindPopup(`<b>${p.name}</b><br>${p.city} · $${p.price}`).addTo(bgLayer);
+  });
+});
+
+// ── DB toggle ─────────────────────────────────────────────────────────────────
+const activeDbs = new Set(['pgvector', 'qdrant', 'milvus']);
+document.querySelectorAll('.db-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const db = btn.dataset.db;
+    if (activeDbs.has(db)) {
+      activeDbs.delete(db);
+      btn.classList.remove('active');
+    } else {
+      activeDbs.add(db);
+      btn.classList.add('active');
+    }
+  });
+});
+
+// ── Search ────────────────────────────────────────────────────────────────────
+async function doSearch() {
+  const query = document.getElementById('query').value.trim();
+  if (!query) return;
+
+  document.getElementById('spinner').style.display = 'block';
+  document.getElementById('results-container').innerHTML = '';
+  document.getElementById('timing').innerHTML = '';
+  Object.values(resultLayers).forEach(l => l.clearLayers());
+
+  const dbs = [...activeDbs];
+  const topK = parseInt(document.getElementById('top-k').value, 10) || 20;
+  if (!dbs.length) {
+    document.getElementById('spinner').style.display = 'none';
+    document.getElementById('results-container').innerHTML =
+      '<div class="empty">Select at least one database.</div>';
+    return;
+  }
+
+  const resp = await fetch('/api/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, dbs, top_k: topK }),
+  });
+  const data = await resp.json();
+  document.getElementById('spinner').style.display = 'none';
+
+  if (!resp.ok) {
+    document.getElementById('results-container').innerHTML =
+      `<div class="empty">${escapeHTML(data.error || 'Search failed')}</div>`;
+    return;
+  }
+
+  // Timing chips
+  const timingEl = document.getElementById('timing');
+  for (const [db, info] of Object.entries(data)) {
+    timingEl.innerHTML += `<span style="color:${COLORS[db]}">${db}: ${info.latency_ms.toFixed(1)}ms</span>`;
+  }
+
+  // Results cards + map markers
+  const container = document.getElementById('results-container');
+  for (const [db, info] of Object.entries(data)) {
+    if (!activeDbs.has(db)) continue;
+    const section = document.createElement('div');
+    section.className = 'results-section';
+    section.innerHTML = `<h3 style="color:${COLORS[db]}">${db} — top ${info.results.length}</h3>`;
+
+    info.results.forEach((r, i) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const price = r.price ? `$${parseFloat(r.price).toFixed(0)}/night` : '';
+      const beds  = r.bedrooms ? `${r.bedrooms}bd` : '';
+      const baths = r.bathrooms ? `${r.bathrooms}ba` : '';
+      const score = r.score !== undefined ? `<span class="score">${(r.score*100).toFixed(1)}%</span>` : '';
+      const url = r.url || (r.listing_id ? `https://www.airbnb.com/rooms/${r.listing_id}` : '');
+      const description = r.description || r.text || '';
+      card.innerHTML = `${score}<div class="title">${escapeHTML(r.name || 'Listing')}</div>
+        <div class="meta">${escapeHTML(r.city || '')} &nbsp;${escapeHTML([price,beds,baths].filter(Boolean).join(' · '))}</div>
+        <div class="listing-id">ID: ${escapeHTML(r.listing_id || '')}</div>
+        <div class="description">${escapeHTML(description || 'No description in processed data.')}</div>
+        <div class="actions">
+          <span>${r.latitude && r.longitude ? 'Click card to focus map' : ''}</span>
+          ${url ? `<a href="${escapeHTML(url)}" target="_blank" rel="noopener">Open listing</a>` : ''}
+        </div>`;
+
+      card.onclick = () => {
+        if (r.latitude && r.longitude) map.setView([r.latitude, r.longitude], 14);
+      };
+      section.appendChild(card);
+
+      // Map marker
+      if (r.latitude && r.longitude) {
+        L.marker([r.latitude, r.longitude], { icon: makeIcon(COLORS[db]) })
+          .bindPopup(`<b>${escapeHTML(r.name || '')}</b><br>${escapeHTML(r.city || '')}<br>${escapeHTML(price)}`)
+          .addTo(resultLayers[db]);
+      }
+    });
+
+    container.appendChild(section);
+  }
+
+  // Fly to first result
+  const first = Object.values(data)[0]?.results[0];
+  if (first?.latitude) map.flyTo([first.latitude, first.longitude], 10, { duration: 1 });
+}
+
+document.getElementById('query').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.ctrlKey) doSearch();
+});
+
+// ── Benchmark chart ──────────────────────────────────────────────────────────
+let benchChart = null;
+
+async function loadBenchmark() {
+  const resp = await fetch('/api/benchmark');
+  if (!resp.ok) { document.getElementById('bench-note').textContent = 'Run benchmark.py to see results.'; return; }
+  const data = await resp.json();
+
+  const labels = ['P50 ms', 'P95 ms', 'P99 ms'];
+  const datasets = [
+    { label: 'pgvector', backgroundColor: COLORS.pgvector+'cc',
+      data: [data.pgvector?.p50_ms, data.pgvector?.p95_ms, data.pgvector?.p99_ms] },
+    { label: 'Qdrant',   backgroundColor: COLORS.qdrant+'cc',
+      data: [data.qdrant?.p50_ms,   data.qdrant?.p95_ms,   data.qdrant?.p99_ms] },
+    { label: 'Milvus',   backgroundColor: COLORS.milvus+'cc',
+      data: [data.milvus?.p50_ms,   data.milvus?.p95_ms,   data.milvus?.p99_ms] },
+  ];
+
+  const ctx = document.getElementById('bench-chart').getContext('2d');
+  if (benchChart) benchChart.destroy();
+  benchChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      plugins: { legend: { labels: { font: { size: 11 } } } },
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'ms' } } },
+      animation: { duration: 400 },
+    },
+  });
+
+  const n = data.n_records?.toLocaleString() || '?';
+  const recall_qd = data.qdrant?.recall ? (data.qdrant.recall * 100).toFixed(1) : '?';
+  const recall_mv = data.milvus?.recall ? (data.milvus.recall * 100).toFixed(1) : '?';
+  document.getElementById('bench-note').textContent =
+    `${n} records · Recall@10: Qdrant ${recall_qd}% · Milvus ${recall_mv}%`;
+}
+
+loadBenchmark();
+</script>
+</body>
+</html>
