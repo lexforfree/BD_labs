@@ -7,25 +7,7 @@
 Модель эмбеддингов: `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions).
 Сравниваются скорость индексации, latency поиска и recall@10.
 
-## Отчетные материалы
 
-- [final/referat_vector_db.docx](final/referat_vector_db.docx) - готовый
-  реферат в формате Word.
-- [final/presentation_vector_db.pptx](final/presentation_vector_db.pptx) -
-  готовая презентация PowerPoint на 7 минут.
-- [report.md](report.md) - реферат по теме с обзором подходов, инструментов,
-  облачных и российских решений, архитектурой эксперимента и выводами.
-- [presentation.md](presentation.md) - план презентации на 7 минут со
-  слайдами и заметками докладчика.
-- [qa.md](qa.md) - вероятные вопросы на защите и короткие ответы.
-- [results/benchmark.json](results/benchmark.json) - результаты benchmark.
-- [results/index_stats.json](results/index_stats.json) - результаты индексации.
-
-Пересборка `.docx` и `.pptx`:
-
-```bash
-uv run --with python-docx --with python-pptx python scripts/build_final_docs.py
-```
 
 ---
 
